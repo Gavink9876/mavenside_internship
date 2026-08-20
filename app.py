@@ -3,8 +3,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="OptiStock Dashboard", layout="wide")
-st.title("OptiStock — Executive Dashboard")
+st.set_page_config(page_title="Inventory Tool Dashboard", layout="wide")
+st.title("Inventory Tool — Executive Dashboard")
 
 # ─────────────────────────────────────────────
 # LOAD DATA (runs every time so edits reflect immediately)
@@ -55,7 +55,7 @@ final_df['Movement'] = final_df['ITR'].apply(
 # ─────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────
-tab1, tab2 = st.tabs(["Dashboard", "Edit Data"])
+tab1, tab2, tab3 = st.tabs(["Dashboard", "Inventory Data", "Transactions Data"])
 
 # ═════════════════════════════════════════════
 # TAB 1 — DASHBOARD
@@ -118,12 +118,19 @@ with tab1:
         fig3.update_layout(xaxis_tickangle=-40, yaxis_title='ITR', xaxis_title='', height=400)
         fig3.update_traces(textposition='outside')
         st.plotly_chart(fig3, use_container_width=True)
+        st.caption(
+            "**ITR = Total Units Sold ÷ Current Stock Level** — "
+            "measures how fast a product sells relative to what's on the shelf. "
+            "A higher ITR means stock is moving quickly. "
+            "A lower ITR means stock is sitting longer and there is a risk of dead stock. "
+            "Products are split into Fast-Moving vs. Slow-Moving at the median ITR of 0.48."
+        )
 
     st.divider()
 
     # Alert table with color coding
     st.subheader("Stock Alerts")
-    display_df = final_df[['SKU', 'Product_Name', 'Current_Level', 'Safety_Stock', 'Reorder_Point', 'Status', 'ITR', 'Movement']].copy()
+    display_df = final_df[['SKU', 'Product_Name', 'Current_Level', 'Safety_Stock', 'Reorder_Point', 'Status']].copy()
 
     def style_row(row):
         colors = {
@@ -149,10 +156,10 @@ with tab1:
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
 # ═════════════════════════════════════════════
-# TAB 2 — EDIT DATA
+# TAB 2 — EDIT INVENTORY
 # ═════════════════════════════════════════════
 with tab2:
-    st.subheader("Edit Inventory Data")
+    st.subheader("Inventory Data")
     st.caption("Change Safety Stock, Reorder Point, Unit Cost, or Lead Time. Click Save when done.")
 
     edited_inventory = st.data_editor(
@@ -172,7 +179,16 @@ with tab2:
 
     st.divider()
 
-    st.subheader("Edit Transactions")
+    if st.button("Save Inventory", type='primary', key='save_inv'):
+        edited_inventory.to_csv('inventory_data.csv', index=False)
+        st.success("Saved! Switch to Dashboard and press R to refresh.")
+        st.rerun()
+
+# ═════════════════════════════════════════════
+# TAB 3 — EDIT TRANSACTIONS
+# ═════════════════════════════════════════════
+with tab3:
+    st.subheader("Transactions Data")
     st.caption("Add new In/Out rows at the bottom, or edit existing ones. Click Save when done.")
 
     edited_transactions = st.data_editor(
@@ -192,8 +208,7 @@ with tab2:
 
     st.divider()
 
-    if st.button("Save Changes", type='primary'):
-        edited_inventory.to_csv('inventory_data.csv', index=False)
+    if st.button("Save Transactions", type='primary', key='save_tx'):
         edited_transactions.to_csv('transactions.csv', index=False)
-        st.success("Saved! Dashboard will reflect changes.")
+        st.success("Saved! Switch to Dashboard and press R to refresh.")
         st.rerun()
