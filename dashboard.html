@@ -1,0 +1,551 @@
+<title>OptiStock Dashboard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap">
+
+<style>
+:root {
+  --bg:          #0C1425;
+  --surface:     #14203A;
+  --surface-2:   #1B2C4A;
+  --border:      #243358;
+  --text:        #D6E4FF;
+  --text-dim:    #6B80A8;
+  --text-muted:  #3E5280;
+  --blue:        #4B8EF5;
+  --warning:     #F5A623;
+  --warning-bg:  rgba(245,166,35,.13);
+  --critical:    #F53A3A;
+  --critical-bg: rgba(245,58,58,.13);
+  --ok:          #3AF57A;
+  --ok-bg:       rgba(58,245,122,.13);
+  --fast:        #34D399;
+  --fast-bg:     rgba(52,211,153,.12);
+  --slow:        #F87171;
+  --slow-bg:     rgba(248,113,113,.12);
+  --track:       #1B2C4A;
+  --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --radius: 6px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg:          #EEF4FF;
+    --surface:     #FFFFFF;
+    --surface-2:   #E6EEFF;
+    --border:      #C4D4EF;
+    --text:        #0D1A33;
+    --text-dim:    #4A5F80;
+    --text-muted:  #8AA0C4;
+    --blue:        #2563EB;
+    --warning:     #D97706;
+    --warning-bg:  rgba(217,119,6,.10);
+    --critical:    #DC2626;
+    --critical-bg: rgba(220,38,38,.10);
+    --ok:          #16A34A;
+    --ok-bg:       rgba(22,163,74,.10);
+    --fast:        #059669;
+    --fast-bg:     rgba(5,150,105,.10);
+    --slow:        #DC2626;
+    --slow-bg:     rgba(220,38,38,.10);
+    --track:       #D6E4FF;
+  }
+}
+:root[data-theme="light"] {
+  --bg:          #EEF4FF;
+  --surface:     #FFFFFF;
+  --surface-2:   #E6EEFF;
+  --border:      #C4D4EF;
+  --text:        #0D1A33;
+  --text-dim:    #4A5F80;
+  --text-muted:  #8AA0C4;
+  --blue:        #2563EB;
+  --warning:     #D97706;
+  --warning-bg:  rgba(217,119,6,.10);
+  --critical:    #DC2626;
+  --critical-bg: rgba(220,38,38,.10);
+  --ok:          #16A34A;
+  --ok-bg:       rgba(22,163,74,.10);
+  --fast:        #059669;
+  --fast-bg:     rgba(5,150,105,.10);
+  --slow:        #DC2626;
+  --slow-bg:     rgba(220,38,38,.10);
+  --track:       #D6E4FF;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 28px 20px 52px;
+}
+
+/* ─── Loading / error states ─── */
+#loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  gap: 16px;
+}
+.spinner {
+  width: 32px; height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-label {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+#error-state {
+  display: none;
+  padding: 32px;
+  background: var(--critical-bg);
+  border: 1px solid var(--critical);
+  border-radius: var(--radius);
+  color: var(--critical);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.8;
+}
+#dashboard { display: none; }
+
+/* ─── Header ─── */
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+.wordmark {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: .14em;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.wordmark em { color: var(--blue); font-style: normal; }
+.header-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.header-meta { text-align: right; }
+.header-meta .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--text-muted);
+}
+.header-meta .value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ─── Refresh button ─── */
+.refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 5px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-family: var(--font-body);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.refresh-btn:hover { border-color: var(--blue); color: var(--blue); }
+.refresh-btn svg { width: 13px; height: 13px; }
+
+/* ─── KPI row ─── */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  margin-bottom: 28px;
+}
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px 16px;
+}
+.kpi-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.kpi-val {
+  font-family: var(--font-mono);
+  font-size: 30px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.kpi-val.c-white    { color: var(--text); }
+.kpi-val.c-critical { color: var(--critical); }
+.kpi-val.c-warning  { color: var(--warning); }
+.kpi-val.c-ok       { color: var(--ok); }
+.kpi-val.c-blue     { color: var(--blue); }
+
+/* ─── Section label ─── */
+.sec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.sec-title {
+  font-size: 11px; font-weight: 700;
+  letter-spacing: .10em; text-transform: uppercase; color: var(--text-dim);
+}
+.sec-note { font-size: 11px; color: var(--text-muted); }
+
+/* ─── Stock table ─── */
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 28px;
+}
+table { width: 100%; border-collapse: collapse; min-width: 680px; }
+thead th {
+  background: var(--surface-2);
+  padding: 9px 14px;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: .09em; text-transform: uppercase;
+  color: var(--text-dim); text-align: left; white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+thead th.r { text-align: right; }
+tbody tr { border-bottom: 1px solid var(--border); }
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: var(--surface); }
+td { padding: 10px 14px; vertical-align: middle; }
+
+.td-sku { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.td-name { font-size: 13px; font-weight: 500; white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.pill {
+  display: inline-flex; align-items: center;
+  padding: 2px 9px; border-radius: 20px;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: .05em; text-transform: uppercase;
+}
+.pill.WARNING  { background: var(--warning-bg);  color: var(--warning); }
+.pill.CRITICAL { background: var(--critical-bg); color: var(--critical); }
+.pill.OK       { background: var(--ok-bg);       color: var(--ok); }
+
+.td-num {
+  font-family: var(--font-mono); font-size: 13px;
+  font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap;
+}
+.td-num.dim { color: var(--text-dim); }
+
+.bar-cell { min-width: 160px; }
+.bar-track { position: relative; height: 6px; background: var(--track); border-radius: 3px; overflow: visible; }
+.bar-fill { position: absolute; inset: 0 auto 0 0; border-radius: 3px; }
+.bar-fill.WARNING  { background: var(--warning); }
+.bar-fill.CRITICAL { background: var(--critical); }
+.bar-fill.OK       { background: var(--ok); }
+.ss-tick { position: absolute; top: -4px; width: 2px; height: 14px; background: var(--critical); border-radius: 1px; opacity: .85; }
+
+/* ─── ITR section ─── */
+.itr-list { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 28px; }
+.itr-head {
+  display: grid; grid-template-columns: 160px 1fr 52px 100px; gap: 14px;
+  padding: 9px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border);
+  font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-dim);
+}
+.itr-row {
+  display: grid; grid-template-columns: 160px 1fr 52px 100px;
+  align-items: center; gap: 14px; padding: 8px 16px;
+  border-bottom: 1px solid var(--border); transition: background .12s;
+}
+.itr-row:last-child { border-bottom: none; }
+.itr-row:hover { background: var(--surface); }
+.itr-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.itr-track { height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; }
+.itr-bar { height: 100%; border-radius: 4px; }
+.itr-bar.Fast-Moving { background: var(--fast); }
+.itr-bar.Slow-Moving { background: var(--slow); opacity: .75; }
+.itr-val { font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; }
+.badge { display: inline-flex; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+.badge.Fast-Moving { background: var(--fast-bg); color: var(--fast); }
+.badge.Slow-Moving { background: var(--slow-bg); color: var(--slow); }
+
+/* ─── Footer ─── */
+.footer { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border); padding-top: 14px; }
+.foot-note { font-size: 11px; color: var(--text-muted); }
+
+@media (max-width: 640px) {
+  .kpi-row { grid-template-columns: repeat(3, 1fr); }
+  .header { flex-direction: column; gap: 10px; }
+  .header-meta { text-align: left; }
+  .footer { flex-direction: column; align-items: flex-start; gap: 4px; }
+}
+</style>
+
+<!-- Loading state -->
+<div id="loading-state" class="page">
+  <div class="spinner"></div>
+  <div class="loading-label">Loading CSV data...</div>
+</div>
+
+<!-- Error state -->
+<div id="error-state" class="page"></div>
+
+<!-- Dashboard (hidden until data loads) -->
+<div id="dashboard">
+<div class="page">
+
+  <header class="header">
+    <div>
+      <div class="wordmark">OPTI<em>STOCK</em></div>
+      <div class="header-sub">Executive Dashboard &nbsp;·&nbsp; Week 3 Deliverable</div>
+    </div>
+    <div class="header-meta">
+      <div class="label">Source</div>
+      <div class="value" id="csv-source">inventory_data.csv + transactions.csv</div>
+      <div class="value" id="dash-date"></div>
+      <button class="refresh-btn" onclick="loadAndRender()">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2M13.5 2v3h-3"/>
+        </svg>
+        Refresh data
+      </button>
+    </div>
+  </header>
+
+  <div class="kpi-row">
+    <div class="kpi"><div class="kpi-label">Products</div><div class="kpi-val c-white" id="kpi-total">—</div></div>
+    <div class="kpi"><div class="kpi-label">Critical</div><div class="kpi-val c-critical" id="kpi-critical">—</div></div>
+    <div class="kpi"><div class="kpi-label">Warning</div><div class="kpi-val c-warning" id="kpi-warning">—</div></div>
+    <div class="kpi"><div class="kpi-label">Healthy</div><div class="kpi-val c-ok" id="kpi-ok">—</div></div>
+    <div class="kpi"><div class="kpi-label">Avg ITR</div><div class="kpi-val c-blue" id="kpi-itr">—</div></div>
+  </div>
+
+  <div class="sec-head">
+    <span class="sec-title">Stock Levels &amp; Alerts</span>
+    <span class="sec-note">Bar = current ÷ reorder point &nbsp;·&nbsp; <span style="color:var(--critical);font-weight:600">|</span> = safety stock threshold</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>SKU</th>
+          <th>Product</th>
+          <th>Alert</th>
+          <th class="r">Current</th>
+          <th style="min-width:160px">vs. Reorder Point</th>
+          <th class="r">Reorder Pt</th>
+          <th class="r">Safety Stock</th>
+        </tr>
+      </thead>
+      <tbody id="stock-tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="sec-head">
+    <span class="sec-title">Inventory Turnover Ratio</span>
+    <span class="sec-note">Units sold ÷ current stock &nbsp;·&nbsp; split at median ITR</span>
+  </div>
+  <div class="itr-list">
+    <div class="itr-head">
+      <span>Product</span><span>Turnover Rate</span>
+      <span style="text-align:right">ITR</span><span>Movement</span>
+    </div>
+    <div id="itr-rows"></div>
+  </div>
+
+  <footer class="footer">
+    <span class="foot-note" id="foot-left">—</span>
+    <span class="foot-note">Gavin Kandiah &nbsp;·&nbsp; OptiStock Internship &nbsp;·&nbsp; Mavenside</span>
+  </footer>
+
+</div>
+</div>
+
+<script>
+// ─── CSV parser ───────────────────────────────────────────────────
+function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  // handle quoted fields (Export-Csv wraps everything in quotes)
+  function splitLine(line) {
+    const fields = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQ = !inQ; }
+      else if (c === ',' && !inQ) { fields.push(cur.trim()); cur = ''; }
+      else { cur += c; }
+    }
+    fields.push(cur.trim());
+    return fields;
+  }
+  const headers = splitLine(lines[0]);
+  return lines.slice(1).filter(l => l.trim()).map(line => {
+    const vals = splitLine(line);
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = (vals[i] || '').trim());
+    return obj;
+  });
+}
+
+// ─── Compute products from raw CSV data ───────────────────────────
+function compute(inventory, transactions) {
+  const inbound = {}, outbound = {};
+  transactions.forEach(tx => {
+    const sku = tx.SKU, qty = parseFloat(tx.Quantity) || 0;
+    if (tx.Type === 'In')  inbound[sku]  = (inbound[sku]  || 0) + qty;
+    if (tx.Type === 'Out') outbound[sku] = (outbound[sku] || 0) + qty;
+  });
+
+  const products = inventory.map(p => {
+    const sku     = p.SKU;
+    const current = Math.round((inbound[sku]  || 0) - (outbound[sku] || 0));
+    const sold    = Math.round(outbound[sku]  || 0);
+    const ss      = parseInt(p.Safety_Stock,  10);
+    const rp      = parseInt(p.Reorder_Point, 10);
+    const itr     = current > 0 ? Math.round((sold / current) * 100) / 100 : 99;
+    const status  = current <= ss ? 'CRITICAL' : current <= rp ? 'WARNING' : 'OK';
+    return { sku, name: p.Product_Name, current, ss, rp, sold, itr, status, movement: '' };
+  });
+
+  // classify by median ITR
+  const sorted = [...products].map(p => p.itr).sort((a, b) => a - b);
+  const mid    = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+  products.forEach(p => { p.movement = p.itr >= median ? 'Fast-Moving' : 'Slow-Moving'; });
+
+  return { products, median };
+}
+
+// ─── Render ───────────────────────────────────────────────────────
+function render(products, txCount) {
+  const counts = { CRITICAL: 0, WARNING: 0, OK: 0 };
+  products.forEach(p => counts[p.status]++);
+  const avgItr = (products.reduce((s, p) => s + p.itr, 0) / products.length).toFixed(2);
+
+  document.getElementById('kpi-total').textContent    = products.length;
+  document.getElementById('kpi-critical').textContent = counts.CRITICAL;
+  document.getElementById('kpi-warning').textContent  = counts.WARNING;
+  document.getElementById('kpi-ok').textContent       = counts.OK;
+  document.getElementById('kpi-itr').textContent      = avgItr;
+  document.getElementById('dash-date').textContent    =
+    new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  document.getElementById('foot-left').textContent    =
+    `${products.length} products · ${txCount} transactions · Kaggle DataCo Supply Chain`;
+
+  // Stock table
+  const tbody = document.getElementById('stock-tbody');
+  tbody.innerHTML = '';
+  products.forEach(p => {
+    const fillPct = Math.min((p.current / p.rp) * 100, 100).toFixed(1);
+    const ssPct   = ((p.ss / p.rp) * 100).toFixed(1);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="td-sku">${p.sku}</td>
+      <td class="td-name">${p.name}</td>
+      <td><span class="pill ${p.status}">${p.status}</span></td>
+      <td class="td-num">${p.current.toLocaleString()}</td>
+      <td class="bar-cell">
+        <div class="bar-track">
+          <div class="bar-fill ${p.status}" style="width:${fillPct}%"></div>
+          <div class="ss-tick" style="left:${ssPct}%"></div>
+        </div>
+      </td>
+      <td class="td-num dim">${p.rp.toLocaleString()}</td>
+      <td class="td-num dim">${p.ss.toLocaleString()}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // ITR rows (high → low)
+  const itrSorted = [...products].sort((a, b) => b.itr - a.itr);
+  const maxItr    = itrSorted[0].itr;
+  const itrCont   = document.getElementById('itr-rows');
+  itrCont.innerHTML = '';
+  itrSorted.forEach(p => {
+    const barW = ((p.itr / maxItr) * 100).toFixed(1);
+    const div  = document.createElement('div');
+    div.className = 'itr-row';
+    div.innerHTML = `
+      <span class="itr-name">${p.name}</span>
+      <div class="itr-track"><div class="itr-bar ${p.movement}" style="width:${barW}%"></div></div>
+      <span class="itr-val">${p.itr.toFixed(2)}</span>
+      <span><span class="badge ${p.movement}">${p.movement}</span></span>
+    `;
+    itrCont.appendChild(div);
+  });
+}
+
+// ─── Load CSVs and render ─────────────────────────────────────────
+async function loadAndRender() {
+  document.getElementById('loading-state').style.display = 'flex';
+  document.getElementById('dashboard').style.display     = 'none';
+  document.getElementById('error-state').style.display   = 'none';
+
+  try {
+    const [invRes, txRes] = await Promise.all([
+      fetch('./inventory_data.csv'),
+      fetch('./transactions.csv')
+    ]);
+
+    if (!invRes.ok) throw new Error(`Could not load inventory_data.csv (${invRes.status})`);
+    if (!txRes.ok)  throw new Error(`Could not load transactions.csv (${txRes.status})`);
+
+    const [invText, txText] = await Promise.all([invRes.text(), txRes.text()]);
+
+    const inventory    = parseCSV(invText);
+    const transactions = parseCSV(txText);
+
+    if (!inventory.length)    throw new Error('inventory_data.csv appears to be empty.');
+    if (!transactions.length) throw new Error('transactions.csv appears to be empty.');
+
+    const { products } = compute(inventory, transactions);
+
+    document.getElementById('loading-state').style.display = 'none';
+    document.getElementById('dashboard').style.display     = 'block';
+    render(products, transactions.length);
+
+  } catch (err) {
+    document.getElementById('loading-state').style.display = 'none';
+    document.getElementById('error-state').style.display   = 'block';
+    document.getElementById('error-state').innerHTML = `
+      <strong>Could not load CSV files</strong><br><br>
+      ${err.message}<br><br>
+      Make sure you are running this from a local server:<br>
+      &nbsp;&nbsp;1. Open a terminal in this folder<br>
+      &nbsp;&nbsp;2. Run: <strong>python -m http.server 8080</strong><br>
+      &nbsp;&nbsp;3. Open: <strong>http://localhost:8080/dashboard.html</strong><br><br>
+      Also confirm <strong>inventory_data.csv</strong> and <strong>transactions.csv</strong>
+      are in the same folder as this HTML file.
+    `;
+  }
+}
+
+loadAndRender();
+</script>
