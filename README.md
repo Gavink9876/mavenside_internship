@@ -13,7 +13,8 @@ mavenside_internship/
 ├── app.py                  ← Streamlit web app (main dashboard)
 ├── dashboard.html          ← Standalone HTML version (no Python needed to view)
 ├── inventory_data.csv      ← 15 products: SKU, cost, lead time, safety stock, reorder point
-└── transactions.csv        ← 465 transactions: synthetic starting stock + real sales data
+├── transactions.csv        ← 465 transactions: synthetic starting stock + real sales data
+└── reorder_events.csv      ← Auto-generated log of every reorder/critical trigger (see below)
 ```
 
 ---
@@ -68,16 +69,22 @@ Press **R** in the browser at any time to reload with the latest CSV data.
 ## Using the dashboard
 
 ### Dashboard tab
-- **KPI tiles** — total products, critical/warning/healthy counts, average ITR
+- **KPI tiles** — total products, critical/warning/healthy counts, average weekly sales, total reorder events logged
 - **Stock levels chart** — current stock vs reorder point vs safety stock for all 15 products
 - **Stock health pie** — breakdown of alert statuses
-- **Inventory turnover chart** — fast-moving vs slow-moving products ranked by ITR
+- **Average weekly sales chart** — fast-moving vs slow-moving products ranked by units sold per week
 - **Alert table** — colour-coded rows: red = critical, orange = warning, green = healthy
 
 ### Edit Data tab
 - Edit safety stock, reorder point, unit cost, or lead time per product
 - Add new transactions (restocks or sales) directly in the browser
 - Click **Save Changes** — writes back to the CSV files and refreshes the dashboard
+
+### Reorder Events tab
+- Auto-generated feed of every sale that dropped a product to/below its Reorder Point or Safety Stock
+- Fires the same day the sale happens (evaluated per-transaction, not on a periodic check)
+- `New_Trigger = True` marks the first sale that pushed a product into that status; later sales while still flagged log again, marked `False`
+- Written out to `reorder_events.csv` every time the app runs
 
 ---
 
@@ -89,7 +96,7 @@ Press **R** in the browser at any time to reload with the latest CSV data.
 | WARNING | `Current_Level <= Reorder_Point` | Place an order soon |
 | OK | `Current_Level > Reorder_Point` | Stock is healthy |
 
-**Inventory Turnover Ratio (ITR)** = Total Units Sold ÷ Current Stock Level. Products above the median ITR are classified as Fast-Moving; below as Slow-Moving.
+**Average Weekly Sales** = Total Units Sold ÷ number of weeks spanned by the transaction data (same date window applied to every product, so the comparison is consistent instead of each product using its own random slice of history). Products above the median are Fast-Moving; at or below are Slow-Moving. (ITR — Total Units Sold ÷ Current Stock Level — is still calculated and kept as a column, but Movement classification is now driven by the weekly rate since it's a more intuitive, consistent number for a store manager to read.)
 
 ---
 

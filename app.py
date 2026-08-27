@@ -4,6 +4,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 st.set_page_config(page_title="Inventory Tool Dashboard", layout="wide")
+st.markdown("""
+<style>
+    [data-testid='stDeployButton'] {display:none}
+    html { font-size: 19px; }
+</style>
+""", unsafe_allow_html=True)
 st.title("Inventory Tool — Executive Dashboard")
 
 # ─────────────────────────────────────────────
@@ -39,23 +45,93 @@ def get_status(row):
 final_df['Status'] = final_df.apply(get_status, axis=1)
 
 # ─────────────────────────────────────────────
-# WEEK 3: Inventory Turnover Ratio
+# WEEK 3: Inventory Turnover Ratio + Weekly Sales Rate
 # ─────────────────────────────────────────────
 outbound_totals = transactions_df[transactions_df['Type'] == 'Out'].groupby('SKU')['Quantity'].sum().reset_index()
 outbound_totals.columns = ['SKU', 'Total_Sold']
 
 final_df = pd.merge(final_df, outbound_totals, on='SKU', how='left')
+final_df['Total_Sold'] = final_df['Total_Sold'].fillna(0)
 final_df['ITR'] = (final_df['Total_Sold'] / final_df['Current_Level']).round(2)
 
-median_itr = final_df['ITR'].median()
-final_df['Movement'] = final_df['ITR'].apply(
-    lambda x: 'Fast-Moving' if x >= median_itr else 'Slow-Moving'
+# Consistent weekly sales rate — same global date window applied to every
+# product, so Fast/Slow-Moving compares apples to apples instead of each
+# product's own random slice of transaction history.
+tx_dates = pd.to_datetime(transactions_df['Date'])
+total_weeks = max((tx_dates.max() - tx_dates.min()).days / 7, 1)
+
+final_df['Avg_Weekly_Sales'] = (final_df['Total_Sold'] / total_weeks).round(2)
+
+median_weekly_sales = final_df['Avg_Weekly_Sales'].median()
+final_df['Movement'] = final_df['Avg_Weekly_Sales'].apply(
+    lambda x: 'Fast-Moving' if x > median_weekly_sales else 'Slow-Moving'
 )
+
+# ─────────────────────────────────────────────
+# AUTOMATION: Reorder Trigger Events Feed
+# Replays every transaction in date order and logs an event the moment a
+# sale drops a product to/below its Reorder Point or Safety Stock — the
+# trigger fires the same day the sale happens, not on a periodic check.
+# ─────────────────────────────────────────────
+def build_reorder_events(inventory_df, transactions_df):
+    thresholds = inventory_df.set_index('SKU')[['Safety_Stock', 'Reorder_Point']]
+    names = inventory_df.set_index('SKU')['Product_Name']
+
+    tx_sorted = transactions_df.copy()
+    tx_sorted['Date'] = pd.to_datetime(tx_sorted['Date'])
+    tx_sorted = tx_sorted.sort_values('Date').reset_index(drop=True)
+
+    running_stock = {}
+    last_status = {}
+    events = []
+
+    for _, tx in tx_sorted.iterrows():
+        sku = tx['SKU']
+        running_stock.setdefault(sku, 0)
+
+        if tx['Type'] == 'In':
+            running_stock[sku] += tx['Quantity']
+            continue
+
+        running_stock[sku] -= tx['Quantity']
+        level = running_stock[sku]
+
+        if sku not in thresholds.index:
+            continue
+        safety_stock  = thresholds.loc[sku, 'Safety_Stock']
+        reorder_point = thresholds.loc[sku, 'Reorder_Point']
+
+        if level <= safety_stock:
+            status = 'CRITICAL'
+        elif level <= reorder_point:
+            status = 'WARNING'
+        else:
+            status = 'OK'
+
+        if status in ('CRITICAL', 'WARNING'):
+            events.append({
+                'Date': tx['Date'].strftime('%Y-%m-%d'),
+                'Transaction_ID': tx['Transaction_ID'],
+                'SKU': sku,
+                'Product_Name': names.get(sku, sku),
+                'Quantity_Sold': tx['Quantity'],
+                'Stock_After_Sale': level,
+                'Safety_Stock': safety_stock,
+                'Reorder_Point': reorder_point,
+                'Trigger_Type': status,
+                'New_Trigger': last_status.get(sku) != status,
+            })
+        last_status[sku] = status
+
+    return pd.DataFrame(events)
+
+reorder_events_df = build_reorder_events(inventory_df, transactions_df)
+reorder_events_df.to_csv('reorder_events.csv', index=False)
 
 # ─────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["Dashboard", "Inventory Data", "Transactions Data"])
+tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "Inventory Data", "Transactions Data", "Reorder Events"])
 
 # ═════════════════════════════════════════════
 # TAB 1 — DASHBOARD
@@ -64,12 +140,13 @@ with tab1:
     st.caption(f"Kaggle DataCo Supply Chain · {len(inventory_df)} products · {len(transactions_df)} transactions")
 
     # KPI tiles
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     col1.metric("Total Products", len(final_df))
     col2.metric("Critical",  int((final_df['Status'] == 'CRITICAL').sum()))
     col3.metric("Warning",   int((final_df['Status'] == 'WARNING').sum()))
     col4.metric("Healthy",   int((final_df['Status'] == 'OK').sum()))
-    col5.metric("Avg ITR",   round(final_df['ITR'].mean(), 2))
+    col5.metric("Avg Weekly Sales", round(final_df['Avg_Weekly_Sales'].mean(), 2))
+    col6.metric("Reorder Events", len(reorder_events_df))
 
     st.divider()
 
@@ -108,22 +185,22 @@ with tab1:
         st.plotly_chart(fig2, use_container_width=True)
 
     with right:
-        st.subheader("Inventory Turnover Ratio")
-        itr_sorted = final_df.sort_values('ITR', ascending=False).copy()
-        itr_sorted['Short_Name'] = itr_sorted['Product_Name'].str[:20]
+        st.subheader("Average Weekly Sales")
+        weekly_sorted = final_df.sort_values('Avg_Weekly_Sales', ascending=False).copy()
+        weekly_sorted['Short_Name'] = weekly_sorted['Product_Name'].str[:20]
         fig3 = px.bar(
-            itr_sorted, x='Short_Name', y='ITR', color='Movement', text='ITR',
+            weekly_sorted, x='Short_Name', y='Avg_Weekly_Sales', color='Movement', text='Avg_Weekly_Sales',
             color_discrete_map={'Fast-Moving': '#2ECC71', 'Slow-Moving': '#E84C4C'}
         )
-        fig3.update_layout(xaxis_tickangle=-40, yaxis_title='ITR', xaxis_title='', height=400)
+        fig3.update_layout(xaxis_tickangle=-40, yaxis_title='Units Sold / Week', xaxis_title='', height=400)
         fig3.update_traces(textposition='outside')
         st.plotly_chart(fig3, use_container_width=True)
         st.caption(
-            "**ITR = Total Units Sold ÷ Current Stock Level** — "
-            "measures how fast a product sells relative to what's on the shelf. "
-            "A higher ITR means stock is moving quickly. "
-            "A lower ITR means stock is sitting longer and there is a risk of dead stock. "
-            "Products are split into Fast-Moving vs. Slow-Moving at the median ITR of 0.48."
+            f"**Avg Weekly Sales = Total Units Sold ÷ {total_weeks:.1f} weeks** "
+            "(the same date window is used for every product, so the comparison is consistent) — "
+            "a plain, easy-to-read measure of how fast each product actually moves. "
+            "A higher number means it's flying off the shelf; a lower number means it's sitting "
+            "and risks becoming dead stock. Products above the median are Fast-Moving, below are Slow-Moving."
         )
 
     st.divider()
@@ -212,3 +289,36 @@ with tab3:
         edited_transactions.to_csv('transactions.csv', index=False)
         st.success("Saved! Switch to Dashboard and press R to refresh.")
         st.rerun()
+
+# ═════════════════════════════════════════════
+# TAB 4 — REORDER EVENTS (AUTOMATION FEED)
+# ═════════════════════════════════════════════
+with tab4:
+    st.subheader("Automatic Reorder Trigger Events")
+    st.caption(
+        "Every time a sale drops a product to or below its Reorder Point or Safety Stock, "
+        "an event is logged here automatically — triggered the same day the sale happens, "
+        "not on a periodic check. This is the automation feed a store manager can audit. "
+        "Saved to reorder_events.csv."
+    )
+
+    if reorder_events_df.empty:
+        st.info("No reorder triggers in the current transaction history.")
+    else:
+        events_display = reorder_events_df.sort_values('Date', ascending=False).copy()
+
+        def style_event_row(row):
+            colors = {
+                'CRITICAL': 'background-color: rgba(239, 68, 68, 0.15)',
+                'WARNING':  'background-color: rgba(245, 158, 11, 0.15)',
+            }
+            return [colors.get(row['Trigger_Type'], '')] * len(row)
+
+        styled_events = events_display.style.apply(style_event_row, axis=1)
+        st.dataframe(styled_events, use_container_width=True, hide_index=True)
+
+        st.caption(
+            "`New_Trigger = True` marks the first sale that pushed a product into that status. "
+            "Later sales while it's still flagged log another event too, but marked False, "
+            "so the feed shows both the moment something first went wrong and everything since."
+        )
