@@ -103,6 +103,44 @@ weekly_sales = weekly_sales.merge(inventory_df[['SKU', 'Product_Name', 'Unit_Cos
 weekly_sales['Dollar_Amount'] = (weekly_sales['Quantity_Sold'] * weekly_sales['Unit_Cost']).round(2)
 weekly_sales = weekly_sales.sort_values(['SKU', 'Week_Start']).reset_index(drop=True)
 
+# Discounted selling price
+final_df['Discounted_Price'] = (final_df['Unit_Price'] * (1 - final_df['Discount_Pct'] / 100)).round(2)
+
+def render_weekly_detail(product_name):
+    """Dual-axis quantity/dollar chart + week-over-week table for one product.
+    Shared by Action Center and the Product Inventory table's click-to-expand."""
+    detail = weekly_sales[weekly_sales['Product_Name'] == product_name].sort_values('Week_Start').copy()
+
+    fig_detail = go.Figure()
+    fig_detail.add_bar(
+        name='Quantity Sold', x=detail['Week_Start'], y=detail['Quantity_Sold'],
+        marker_color='#4C9BE8', yaxis='y1'
+    )
+    fig_detail.add_scatter(
+        name='Dollar Amount', x=detail['Week_Start'], y=detail['Dollar_Amount'],
+        mode='lines+markers', marker_color='#F4A100', yaxis='y2'
+    )
+    fig_detail.update_layout(
+        yaxis=dict(title='Units Sold'),
+        yaxis2=dict(title='Dollar Amount ($)', overlaying='y', side='right'),
+        legend=dict(orientation='h', y=1.12),
+        height=350,
+        margin=dict(t=30)
+    )
+    st.plotly_chart(fig_detail, use_container_width=True, key=f'weekly_detail_{product_name}')
+
+    detail['Qty_Change_vs_Prior_Week'] = detail['Quantity_Sold'].diff()
+    detail['Dollar_Change_vs_Prior_Week'] = detail['Dollar_Amount'].diff()
+    detail_display = detail[[
+        'Week_Start', 'Quantity_Sold', 'Qty_Change_vs_Prior_Week', 'Dollar_Amount', 'Dollar_Change_vs_Prior_Week'
+    ]].copy()
+    detail_display['Week_Start'] = detail_display['Week_Start'].dt.strftime('%Y-%m-%d')
+    detail_display.columns = [
+        'Week Starting', 'Quantity Sold', 'Qty Change vs Prior Week', 'Dollar Amount', '$ Change vs Prior Week'
+    ]
+    st.dataframe(detail_display, use_container_width=True, hide_index=True, key=f'weekly_table_{product_name}')
+    st.caption("Week-over-week velocity for the selected product — first week has no prior week to compare against.")
+
 # ─────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────
@@ -217,37 +255,7 @@ with tab0:
     selected_name = st.selectbox(
         "Select a product", options=sorted(inventory_df['Product_Name'].unique()), key='action_center_product'
     )
-    detail = weekly_sales[weekly_sales['Product_Name'] == selected_name].sort_values('Week_Start').copy()
-
-    fig_detail = go.Figure()
-    fig_detail.add_bar(
-        name='Quantity Sold', x=detail['Week_Start'], y=detail['Quantity_Sold'],
-        marker_color='#4C9BE8', yaxis='y1'
-    )
-    fig_detail.add_scatter(
-        name='Dollar Amount', x=detail['Week_Start'], y=detail['Dollar_Amount'],
-        mode='lines+markers', marker_color='#F4A100', yaxis='y2'
-    )
-    fig_detail.update_layout(
-        yaxis=dict(title='Units Sold'),
-        yaxis2=dict(title='Dollar Amount ($)', overlaying='y', side='right'),
-        legend=dict(orientation='h', y=1.12),
-        height=350,
-        margin=dict(t=30)
-    )
-    st.plotly_chart(fig_detail, use_container_width=True)
-
-    detail['Qty_Change_vs_Prior_Week'] = detail['Quantity_Sold'].diff()
-    detail['Dollar_Change_vs_Prior_Week'] = detail['Dollar_Amount'].diff()
-    detail_display = detail[[
-        'Week_Start', 'Quantity_Sold', 'Qty_Change_vs_Prior_Week', 'Dollar_Amount', 'Dollar_Change_vs_Prior_Week'
-    ]].copy()
-    detail_display['Week_Start'] = detail_display['Week_Start'].dt.strftime('%Y-%m-%d')
-    detail_display.columns = [
-        'Week Starting', 'Quantity Sold', 'Qty Change vs Prior Week', 'Dollar Amount', '$ Change vs Prior Week'
-    ]
-    st.dataframe(detail_display, use_container_width=True, hide_index=True)
-    st.caption("Week-over-week velocity for the selected product — first week has no prior week to compare against.")
+    render_weekly_detail(selected_name)
 
 # ═════════════════════════════════════════════
 # TAB 1 — PRODUCT INVENTORY
@@ -255,9 +263,17 @@ with tab0:
 with tab1:
     st.caption(f"Kaggle DataCo Supply Chain · {len(inventory_df)} products · {len(transactions_df)} transactions")
 
-    # Alert table with color coding
-    st.subheader("Stock Alerts")
-    display_df = final_df[['SKU', 'Product_Name', 'Current_Level', 'Safety_Stock', 'Reorder_Point', 'Status']].copy()
+    # Inventory table with color coding, price/discount, and click-to-expand detail
+    st.subheader("Inventory Table")
+    st.caption("Click a product row to see its weekly sales trend and set a discount.")
+    display_df = final_df[[
+        'SKU', 'Product_Name', 'Current_Level', 'Safety_Stock', 'Reorder_Point', 'Status',
+        'Unit_Price', 'Discount_Pct', 'Discounted_Price'
+    ]].copy()
+    display_df.columns = [
+        'SKU', 'Product_Name', 'Current_Level', 'Safety_Stock', 'Reorder_Point', 'Status',
+        'Unit Price', 'Discount %', 'Discounted Price'
+    ]
 
     def style_row(row):
         colors = {
@@ -279,8 +295,32 @@ with tab1:
         display_df.style
         .apply(style_row, axis=1)
         .map(style_status_cell, subset=['Status'])
+        .format({'Unit Price': '${:.2f}', 'Discounted Price': '${:.2f}', 'Discount %': '{:.0f}%'})
     )
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+    table_event = st.dataframe(
+        styled, use_container_width=True, hide_index=True,
+        on_select='rerun', selection_mode='single-row', key='inventory_table'
+    )
+
+    selected_rows = table_event.selection.rows if table_event and table_event.selection else []
+    if selected_rows:
+        selected_sku = display_df.iloc[selected_rows[0]]['SKU']
+        selected_product = display_df.iloc[selected_rows[0]]['Product_Name']
+        current_discount = int(final_df.loc[final_df['SKU'] == selected_sku, 'Discount_Pct'].iloc[0])
+
+        st.markdown(f"#### {selected_product}")
+
+        dc1, dc2 = st.columns([3, 1])
+        new_discount = dc1.slider(
+            "Discount %", min_value=0, max_value=90, value=current_discount, key=f'discount_slider_{selected_sku}'
+        )
+        if dc2.button("Apply Discount", key=f'apply_discount_{selected_sku}'):
+            inventory_df.loc[inventory_df['SKU'] == selected_sku, 'Discount_Pct'] = new_discount
+            inventory_df.to_csv('inventory_data.csv', index=False)
+            st.success(f"Discount updated to {new_discount}% for {selected_product}.")
+            st.rerun()
+
+        render_weekly_detail(selected_product)
 
     st.divider()
 
@@ -342,7 +382,7 @@ with tab1:
 # ═════════════════════════════════════════════
 with tab2:
     st.subheader("Inventory Data")
-    st.caption("Change Safety Stock, Reorder Point, Unit Cost, or Lead Time. Click Save when done.")
+    st.caption("Change Safety Stock, Reorder Point, Unit Cost, Unit Price, Discount, or Lead Time. Click Save when done.")
 
     edited_inventory = st.data_editor(
         inventory_df,
@@ -355,6 +395,8 @@ with tab2:
             'Lead_Time_Days':st.column_config.NumberColumn('Lead Time (days)', min_value=1),
             'Safety_Stock':  st.column_config.NumberColumn('Safety Stock', min_value=0),
             'Reorder_Point': st.column_config.NumberColumn('Reorder Point', min_value=0),
+            'Unit_Price':    st.column_config.NumberColumn('Unit Price ($)', min_value=0, format='$%.2f'),
+            'Discount_Pct':  st.column_config.NumberColumn('Discount (%)', min_value=0, max_value=90),
         },
         key='inv_editor'
     )
