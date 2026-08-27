@@ -106,7 +106,7 @@ weekly_sales = weekly_sales.sort_values(['SKU', 'Week_Start']).reset_index(drop=
 # ─────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────
-tab0, tab1, tab2, tab3 = st.tabs(["Action Center", "Dashboard", "Inventory Data", "Transactions Data"])
+tab0, tab1, tab2, tab3 = st.tabs(["Action Center", "Product Inventory", "Inventory Data", "Transactions Data"])
 
 # ═════════════════════════════════════════════
 # TAB 0 — ACTION CENTER
@@ -250,35 +250,37 @@ with tab0:
     st.caption("Week-over-week velocity for the selected product — first week has no prior week to compare against.")
 
 # ═════════════════════════════════════════════
-# TAB 1 — DASHBOARD
+# TAB 1 — PRODUCT INVENTORY
 # ═════════════════════════════════════════════
 with tab1:
     st.caption(f"Kaggle DataCo Supply Chain · {len(inventory_df)} products · {len(transactions_df)} transactions")
 
-    # KPI tiles
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Total Products", len(final_df))
-    col2.metric(
-        "Insufficient Inventory",
-        int((final_df['Status'] == 'CRITICAL').sum()),
-        help="Current stock is at or below Safety Stock — the emergency buffer is gone. Order immediately."
+    # Alert table with color coding
+    st.subheader("Stock Alerts")
+    display_df = final_df[['SKU', 'Product_Name', 'Current_Level', 'Safety_Stock', 'Reorder_Point', 'Status']].copy()
+
+    def style_row(row):
+        colors = {
+            'CRITICAL': 'background-color: rgba(239, 68, 68, 0.15)',
+            'WARNING':  'background-color: rgba(245, 158, 11, 0.15)',
+            'OK':       'background-color: rgba(34, 197, 94, 0.15)',
+        }
+        return [colors.get(row['Status'], '')] * len(row)
+
+    def style_status_cell(val):
+        styles = {
+            'CRITICAL': 'background-color: #ef4444; color: white; font-weight: 700',
+            'WARNING':  'background-color: #f59e0b; color: white; font-weight: 700',
+            'OK':       'background-color: #22c55e; color: white; font-weight: 700',
+        }
+        return styles.get(val, '')
+
+    styled = (
+        display_df.style
+        .apply(style_row, axis=1)
+        .map(style_status_cell, subset=['Status'])
     )
-    col3.metric(
-        "Reorder Needed",
-        int((final_df['Status'] == 'WARNING').sum()),
-        help="Current stock is at or below the Reorder Point, but still above Safety Stock. Time to place an order."
-    )
-    col4.metric(
-        "Sufficient Inventory",
-        int((final_df['Status'] == 'OK').sum()),
-        help="Current stock is above the Reorder Point. No action needed right now."
-    )
-    col5.metric(
-        "Avg Weekly Sales",
-        round(final_df['Avg_Weekly_Sales'].mean(), 2),
-        help=f"Average units sold per week across all products (Total Units Sold ÷ {total_weeks:.1f} weeks, "
-             "the same date window for every product). Higher means products are moving faster off the shelf."
-    )
+    st.dataframe(styled, use_container_width=True, hide_index=True)
 
     st.divider()
 
@@ -335,35 +337,6 @@ with tab1:
             "and risks becoming dead stock. Products above the median are Fast-Moving, below are Slow-Moving."
         )
 
-    st.divider()
-
-    # Alert table with color coding
-    st.subheader("Stock Alerts")
-    display_df = final_df[['SKU', 'Product_Name', 'Current_Level', 'Safety_Stock', 'Reorder_Point', 'Status']].copy()
-
-    def style_row(row):
-        colors = {
-            'CRITICAL': 'background-color: rgba(239, 68, 68, 0.15)',
-            'WARNING':  'background-color: rgba(245, 158, 11, 0.15)',
-            'OK':       'background-color: rgba(34, 197, 94, 0.15)',
-        }
-        return [colors.get(row['Status'], '')] * len(row)
-
-    def style_status_cell(val):
-        styles = {
-            'CRITICAL': 'background-color: #ef4444; color: white; font-weight: 700',
-            'WARNING':  'background-color: #f59e0b; color: white; font-weight: 700',
-            'OK':       'background-color: #22c55e; color: white; font-weight: 700',
-        }
-        return styles.get(val, '')
-
-    styled = (
-        display_df.style
-        .apply(style_row, axis=1)
-        .map(style_status_cell, subset=['Status'])
-    )
-    st.dataframe(styled, use_container_width=True, hide_index=True)
-
 # ═════════════════════════════════════════════
 # TAB 2 — EDIT INVENTORY
 # ═════════════════════════════════════════════
@@ -390,7 +363,7 @@ with tab2:
 
     if st.button("Save Inventory", type='primary', key='save_inv'):
         edited_inventory.to_csv('inventory_data.csv', index=False)
-        st.success("Saved! Switch to Dashboard and press R to refresh.")
+        st.success("Saved! Switch to Product Inventory and press R to refresh.")
         st.rerun()
 
 # ═════════════════════════════════════════════
@@ -423,5 +396,5 @@ with tab3:
 
     if st.button("Save Transactions", type='primary', key='save_tx'):
         edited_transactions.to_csv('transactions.csv', index=False)
-        st.success("Saved! Switch to Dashboard and press R to refresh.")
+        st.success("Saved! Switch to Product Inventory and press R to refresh.")
         st.rerun()
