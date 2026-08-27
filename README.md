@@ -13,8 +13,7 @@ mavenside_internship/
 ├── app.py                  ← Streamlit web app (main dashboard)
 ├── dashboard.html          ← Standalone HTML version (no Python needed to view)
 ├── inventory_data.csv      ← 15 products: SKU, cost, lead time, safety stock, reorder point
-├── transactions.csv        ← 465 transactions: synthetic starting stock + real sales data
-└── reorder_events.csv      ← Auto-generated log of every reorder/critical trigger (see below)
+└── transactions.csv        ← 465 transactions: synthetic starting stock + real sales data
 ```
 
 ---
@@ -69,7 +68,7 @@ Press **R** in the browser at any time to reload with the latest CSV data.
 ## Using the dashboard
 
 ### Dashboard tab
-- **KPI tiles** — total products, critical/warning/healthy counts, average weekly sales, total reorder events logged
+- **KPI tiles** — total products, critical/warning/healthy counts, average weekly sales
 - **Stock levels chart** — current stock vs reorder point vs safety stock for all 15 products
 - **Stock health pie** — breakdown of alert statuses
 - **Average weekly sales chart** — fast-moving vs slow-moving products ranked by units sold per week
@@ -79,12 +78,6 @@ Press **R** in the browser at any time to reload with the latest CSV data.
 - Edit safety stock, reorder point, unit cost, or lead time per product
 - Add new transactions (restocks or sales) directly in the browser
 - Click **Save Changes** — writes back to the CSV files and refreshes the dashboard
-
-### Reorder Events tab
-- Auto-generated feed of every sale that dropped a product to/below its Reorder Point or Safety Stock
-- Fires the same day the sale happens (evaluated per-transaction, not on a periodic check)
-- `New_Trigger = True` marks the first sale that pushed a product into that status; later sales while still flagged log again, marked `False`
-- Written out to `reorder_events.csv` every time the app runs
 
 ---
 

@@ -68,70 +68,9 @@ final_df['Movement'] = final_df['Avg_Weekly_Sales'].apply(
 )
 
 # ─────────────────────────────────────────────
-# AUTOMATION: Reorder Trigger Events Feed
-# Replays every transaction in date order and logs an event the moment a
-# sale drops a product to/below its Reorder Point or Safety Stock — the
-# trigger fires the same day the sale happens, not on a periodic check.
-# ─────────────────────────────────────────────
-def build_reorder_events(inventory_df, transactions_df):
-    thresholds = inventory_df.set_index('SKU')[['Safety_Stock', 'Reorder_Point']]
-    names = inventory_df.set_index('SKU')['Product_Name']
-
-    tx_sorted = transactions_df.copy()
-    tx_sorted['Date'] = pd.to_datetime(tx_sorted['Date'])
-    tx_sorted = tx_sorted.sort_values('Date').reset_index(drop=True)
-
-    running_stock = {}
-    last_status = {}
-    events = []
-
-    for _, tx in tx_sorted.iterrows():
-        sku = tx['SKU']
-        running_stock.setdefault(sku, 0)
-
-        if tx['Type'] == 'In':
-            running_stock[sku] += tx['Quantity']
-            continue
-
-        running_stock[sku] -= tx['Quantity']
-        level = running_stock[sku]
-
-        if sku not in thresholds.index:
-            continue
-        safety_stock  = thresholds.loc[sku, 'Safety_Stock']
-        reorder_point = thresholds.loc[sku, 'Reorder_Point']
-
-        if level <= safety_stock:
-            status = 'CRITICAL'
-        elif level <= reorder_point:
-            status = 'WARNING'
-        else:
-            status = 'OK'
-
-        if status in ('CRITICAL', 'WARNING'):
-            events.append({
-                'Date': tx['Date'].strftime('%Y-%m-%d'),
-                'Transaction_ID': tx['Transaction_ID'],
-                'SKU': sku,
-                'Product_Name': names.get(sku, sku),
-                'Quantity_Sold': tx['Quantity'],
-                'Stock_After_Sale': level,
-                'Safety_Stock': safety_stock,
-                'Reorder_Point': reorder_point,
-                'Trigger_Type': status,
-                'New_Trigger': last_status.get(sku) != status,
-            })
-        last_status[sku] = status
-
-    return pd.DataFrame(events)
-
-reorder_events_df = build_reorder_events(inventory_df, transactions_df)
-reorder_events_df.to_csv('reorder_events.csv', index=False)
-
-# ─────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "Inventory Data", "Transactions Data", "Reorder Events"])
+tab1, tab2, tab3 = st.tabs(["Dashboard", "Inventory Data", "Transactions Data"])
 
 # ═════════════════════════════════════════════
 # TAB 1 — DASHBOARD
@@ -140,13 +79,12 @@ with tab1:
     st.caption(f"Kaggle DataCo Supply Chain · {len(inventory_df)} products · {len(transactions_df)} transactions")
 
     # KPI tiles
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Total Products", len(final_df))
     col2.metric("Critical",  int((final_df['Status'] == 'CRITICAL').sum()))
     col3.metric("Warning",   int((final_df['Status'] == 'WARNING').sum()))
     col4.metric("Healthy",   int((final_df['Status'] == 'OK').sum()))
     col5.metric("Avg Weekly Sales", round(final_df['Avg_Weekly_Sales'].mean(), 2))
-    col6.metric("Reorder Events", len(reorder_events_df))
 
     st.divider()
 
@@ -289,36 +227,3 @@ with tab3:
         edited_transactions.to_csv('transactions.csv', index=False)
         st.success("Saved! Switch to Dashboard and press R to refresh.")
         st.rerun()
-
-# ═════════════════════════════════════════════
-# TAB 4 — REORDER EVENTS (AUTOMATION FEED)
-# ═════════════════════════════════════════════
-with tab4:
-    st.subheader("Automatic Reorder Trigger Events")
-    st.caption(
-        "Every time a sale drops a product to or below its Reorder Point or Safety Stock, "
-        "an event is logged here automatically — triggered the same day the sale happens, "
-        "not on a periodic check. This is the automation feed a store manager can audit. "
-        "Saved to reorder_events.csv."
-    )
-
-    if reorder_events_df.empty:
-        st.info("No reorder triggers in the current transaction history.")
-    else:
-        events_display = reorder_events_df.sort_values('Date', ascending=False).copy()
-
-        def style_event_row(row):
-            colors = {
-                'CRITICAL': 'background-color: rgba(239, 68, 68, 0.15)',
-                'WARNING':  'background-color: rgba(245, 158, 11, 0.15)',
-            }
-            return [colors.get(row['Trigger_Type'], '')] * len(row)
-
-        styled_events = events_display.style.apply(style_event_row, axis=1)
-        st.dataframe(styled_events, use_container_width=True, hide_index=True)
-
-        st.caption(
-            "`New_Trigger = True` marks the first sale that pushed a product into that status. "
-            "Later sales while it's still flagged log another event too, but marked False, "
-            "so the feed shows both the moment something first went wrong and everything since."
-        )
