@@ -1,16 +1,16 @@
 SKU,Product_Name,Unit_Cost,Lead_Time_Days,Safety_Stock,Reorder_Point
-PROD-365,Perfect Fitness Perfect Rip Deck,59.99,7,50,200
-PROD-403,Nike Men's CJ Elite 2 TD Football Cleat,129.99,7,44,199
-PROD-502,Nike Men's Dri-FIT Victory Golf Polo,50,7,50,150
-PROD-1014,O'Brien Men's Neoprene Life Vest,49.98,7,115,518
-PROD-1004,Field & Stream Sportsman 16 Gun Fire Safe,399.98,7,34,155
-PROD-1073,Pelican Sunstream 100 Kayak,199.99,7,31,139
-PROD-957,Diamondback Women's Serene Classic Comfort Bi,299.98,7,27,123
-PROD-191,Nike Men's Free 5.0+ Running Shoe,99.99,7,40,120
-PROD-627,Under Armour Girls' Toddler Spine Surge Runni,39.99,7,63,284
-PROD-1362,Fighting video games,39.75,7,31,140
-PROD-1350,Children's heaters,357.1,7,55,110
-PROD-1363,Summer dresses,215.82,7,65,130
-PROD-1349,Web Camera,452.04,7,45,90
-PROD-1361,Toys,11.54,7,50,100
-PROD-1359,Adult dog supplies,84.4,7,23,105
+PROD-365,Perfect Fitness Perfect Rip Deck,59.99,3,46,138
+PROD-403,Nike Men's CJ Elite 2 TD Football Cleat,129.99,4,15,45
+PROD-502,Nike Men's Dri-FIT Victory Golf Polo,50.0,3,43,129
+PROD-1014,O'Brien Men's Neoprene Life Vest,49.98,3,43,129
+PROD-1004,Field & Stream Sportsman 16 Gun Fire Safe,399.98,6,15,45
+PROD-1073,Pelican Sunstream 100 Kayak,199.99,5,15,45
+PROD-957,Diamondback Women's Serene Classic Comfort Bi,299.98,5,15,45
+PROD-191,Nike Men's Free 5.0+ Running Shoe,99.99,4,40,121
+PROD-627,Under Armour Girls' Toddler Spine Surge Runni,39.99,2,25,75
+PROD-1362,Fighting video games,39.75,2,6,18
+PROD-1350,Children's heaters,357.1,6,15,45
+PROD-1363,Summer dresses,215.82,5,15,45
+PROD-1349,Web Camera,452.04,7,2,5
+PROD-1361,Toys,11.54,2,2,6
+PROD-1359,Adult dog supplies,84.4,4,15,45

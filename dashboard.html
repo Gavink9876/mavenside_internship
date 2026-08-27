@@ -239,6 +239,13 @@ thead th {
   border-bottom: 1px solid var(--border);
 }
 thead th.r { text-align: right; }
+th.sortable, .itr-head span.sortable {
+  cursor: pointer; user-select: none;
+}
+th.sortable:hover, .itr-head span.sortable:hover { color: var(--text); }
+th.sortable.active, .itr-head span.sortable.active { color: var(--blue); }
+.sort-arrow { display: inline-block; margin-left: 4px; font-size: 9px; opacity: .45; }
+th.sortable.active .sort-arrow, .itr-head span.sortable.active .sort-arrow { opacity: 1; }
 tbody tr { border-bottom: 1px solid var(--border); }
 tbody tr:last-child { border-bottom: none; }
 tbody tr:hover { background: var(--surface); }
@@ -353,13 +360,13 @@ td { padding: 10px 14px; vertical-align: middle; }
     <table>
       <thead>
         <tr>
-          <th>SKU</th>
-          <th>Product</th>
-          <th>Alert</th>
-          <th class="r">Current</th>
+          <th class="sortable" data-key="sku">SKU<span class="sort-arrow"></span></th>
+          <th class="sortable" data-key="name">Product<span class="sort-arrow"></span></th>
+          <th class="sortable" data-key="status">Alert<span class="sort-arrow"></span></th>
+          <th class="sortable r" data-key="current">Current<span class="sort-arrow"></span></th>
           <th style="min-width:160px">vs. Reorder Point</th>
-          <th class="r">Reorder Pt</th>
-          <th class="r">Safety Stock</th>
+          <th class="sortable r" data-key="rp">Reorder Pt<span class="sort-arrow"></span></th>
+          <th class="sortable r" data-key="ss">Safety Stock<span class="sort-arrow"></span></th>
         </tr>
       </thead>
       <tbody id="stock-tbody"></tbody>
@@ -372,8 +379,8 @@ td { padding: 10px 14px; vertical-align: middle; }
   </div>
   <div class="itr-list">
     <div class="itr-head">
-      <span>Product</span><span>Turnover Rate</span>
-      <span style="text-align:right">ITR</span><span>Movement</span>
+      <span class="sortable" data-key="name">Product<span class="sort-arrow"></span></span><span>Turnover Rate</span>
+      <span class="sortable" data-key="itr" style="text-align:right">ITR<span class="sort-arrow"></span></span><span class="sortable" data-key="movement">Movement<span class="sort-arrow"></span></span>
     </div>
     <div id="itr-rows"></div>
   </div>
@@ -443,8 +450,42 @@ function compute(inventory, transactions) {
   return { products, median };
 }
 
-// ─── Render ───────────────────────────────────────────────────────
-function render(products, txCount) {
+// ─── Sorting state ──────────────────────────────────────────────
+let currentProducts = [];
+let stockSort = { key: null, dir: 1 };   // null = keep CSV/compute order
+let itrSort   = { key: 'itr', dir: -1 }; // default: highest ITR first, same as before
+
+const RANK = {
+  status:   { CRITICAL: 0, WARNING: 1, OK: 2 },
+  movement: { 'Fast-Moving': 0, 'Slow-Moving': 1 },
+};
+
+function compareBy(key, dir) {
+  return (a, b) => {
+    let av = a[key], bv = b[key];
+    if (RANK[key]) { av = RANK[key][av]; bv = RANK[key][bv]; }
+    else if (typeof av === 'string') { av = av.toLowerCase(); bv = bv.toLowerCase(); }
+    if (av < bv) return -1 * dir;
+    if (av > bv) return  1 * dir;
+    return 0;
+  };
+}
+
+function setSortIndicator(container, key, dir) {
+  container.querySelectorAll('.sortable').forEach(el => {
+    const arrow = el.querySelector('.sort-arrow');
+    if (el.dataset.key === key) {
+      el.classList.add('active');
+      arrow.textContent = dir === 1 ? '▲' : '▼';
+    } else {
+      el.classList.remove('active');
+      arrow.textContent = '';
+    }
+  });
+}
+
+// ─── Render: KPIs + footer (computed once per data load) ─────────
+function renderSummary(products, txCount) {
   const counts = { CRITICAL: 0, WARNING: 0, OK: 0 };
   products.forEach(p => counts[p.status]++);
   const avgItr = (products.reduce((s, p) => s + p.itr, 0) / products.length).toFixed(2);
@@ -458,11 +499,16 @@ function render(products, txCount) {
     new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   document.getElementById('foot-left').textContent    =
     `${products.length} products · ${txCount} transactions · Kaggle DataCo Supply Chain`;
+}
 
-  // Stock table
+// ─── Render: Stock table (re-sortable without refetching data) ───
+function renderStockTable() {
+  const rows = [...currentProducts];
+  if (stockSort.key) rows.sort(compareBy(stockSort.key, stockSort.dir));
+
   const tbody = document.getElementById('stock-tbody');
   tbody.innerHTML = '';
-  products.forEach(p => {
+  rows.forEach(p => {
     const fillPct = Math.min((p.current / p.rp) * 100, 100).toFixed(1);
     const ssPct   = ((p.ss / p.rp) * 100).toFixed(1);
     const tr = document.createElement('tr');
@@ -483,12 +529,16 @@ function render(products, txCount) {
     tbody.appendChild(tr);
   });
 
-  // ITR rows (high → low)
-  const itrSorted = [...products].sort((a, b) => b.itr - a.itr);
-  const maxItr    = itrSorted[0].itr;
-  const itrCont   = document.getElementById('itr-rows');
+  setSortIndicator(document.querySelector('.table-wrap thead tr'), stockSort.key, stockSort.dir);
+}
+
+// ─── Render: ITR list (re-sortable without refetching data) ──────
+function renderItrList() {
+  const rows = [...currentProducts].sort(compareBy(itrSort.key, itrSort.dir));
+  const maxItr  = Math.max(...rows.map(p => p.itr));
+  const itrCont = document.getElementById('itr-rows');
   itrCont.innerHTML = '';
-  itrSorted.forEach(p => {
+  rows.forEach(p => {
     const barW = ((p.itr / maxItr) * 100).toFixed(1);
     const div  = document.createElement('div');
     div.className = 'itr-row';
@@ -500,7 +550,34 @@ function render(products, txCount) {
     `;
     itrCont.appendChild(div);
   });
+
+  setSortIndicator(document.querySelector('.itr-head'), itrSort.key, itrSort.dir);
 }
+
+function render(products, txCount) {
+  currentProducts = products;
+  renderSummary(products, txCount);
+  renderStockTable();
+  renderItrList();
+}
+
+// ─── Wire up click-to-sort on both tables (headers exist once in DOM) ───
+document.querySelector('.table-wrap thead tr').querySelectorAll('.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    stockSort.dir = (stockSort.key === key) ? stockSort.dir * -1 : 1;
+    stockSort.key = key;
+    renderStockTable();
+  });
+});
+document.querySelector('.itr-head').querySelectorAll('.sortable').forEach(span => {
+  span.addEventListener('click', () => {
+    const key = span.dataset.key;
+    itrSort.dir = (itrSort.key === key) ? itrSort.dir * -1 : 1;
+    itrSort.key = key;
+    renderItrList();
+  });
+});
 
 // ─── Load CSVs and render ─────────────────────────────────────────
 async function loadAndRender() {

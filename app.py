@@ -81,10 +81,27 @@ with tab1:
     # KPI tiles
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Total Products", len(final_df))
-    col2.metric("Critical",  int((final_df['Status'] == 'CRITICAL').sum()))
-    col3.metric("Warning",   int((final_df['Status'] == 'WARNING').sum()))
-    col4.metric("Healthy",   int((final_df['Status'] == 'OK').sum()))
-    col5.metric("Avg Weekly Sales", round(final_df['Avg_Weekly_Sales'].mean(), 2))
+    col2.metric(
+        "Insufficient Inventory",
+        int((final_df['Status'] == 'CRITICAL').sum()),
+        help="Current stock is at or below Safety Stock — the emergency buffer is gone. Order immediately."
+    )
+    col3.metric(
+        "Reorder Needed",
+        int((final_df['Status'] == 'WARNING').sum()),
+        help="Current stock is at or below the Reorder Point, but still above Safety Stock. Time to place an order."
+    )
+    col4.metric(
+        "Sufficient Inventory",
+        int((final_df['Status'] == 'OK').sum()),
+        help="Current stock is above the Reorder Point. No action needed right now."
+    )
+    col5.metric(
+        "Avg Weekly Sales",
+        round(final_df['Avg_Weekly_Sales'].mean(), 2),
+        help=f"Average units sold per week across all products (Total Units Sold ÷ {total_weeks:.1f} weeks, "
+             "the same date window for every product). Higher means products are moving faster off the shelf."
+    )
 
     st.divider()
 
@@ -206,8 +223,12 @@ with tab3:
     st.subheader("Transactions Data")
     st.caption("Add new In/Out rows at the bottom, or edit existing ones. Click Save when done.")
 
+    transactions_display = transactions_df.copy()
+    transactions_display['_sort_date'] = pd.to_datetime(transactions_display['Date'])
+    transactions_display = transactions_display.sort_values('_sort_date', ascending=False).drop(columns='_sort_date').reset_index(drop=True)
+
     edited_transactions = st.data_editor(
-        transactions_df,
+        transactions_display,
         use_container_width=True,
         hide_index=True,
         num_rows='dynamic',
