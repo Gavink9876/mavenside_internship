@@ -68,9 +68,186 @@ final_df['Movement'] = final_df['Avg_Weekly_Sales'].apply(
 )
 
 # ─────────────────────────────────────────────
+# ACTION CENTER: Days Until Stockout, Financial Exposure, Recent Trend
+# ─────────────────────────────────────────────
+final_df['Daily_Rate'] = final_df['Avg_Weekly_Sales'] / 7
+final_df['Days_Until_Stockout'] = final_df.apply(
+    lambda r: round(r['Current_Level'] / r['Daily_Rate'], 1) if r['Daily_Rate'] > 0 else float('inf'),
+    axis=1
+)
+
+final_df['Inventory_Value'] = (final_df['Current_Level'] * final_df['Unit_Cost']).round(2)
+
+# ─────────────────────────────────────────────
+# ACTION CENTER: Weekly Sales Trend (quantity + dollar) per product
+# Bins every "Out" transaction into one of the last N weekly buckets so each
+# product's sales can be plotted week over week, quantity and dollar both.
+# ─────────────────────────────────────────────
+n_weeks = int(total_weeks)
+week_starts = pd.date_range(start=tx_dates.min().normalize(), periods=n_weeks, freq='7D')
+
+out_tx = transactions_df[transactions_df['Type'] == 'Out'].copy()
+out_tx['Date'] = pd.to_datetime(out_tx['Date'])
+week_idx = ((out_tx['Date'] - week_starts[0]).dt.days // 7).clip(upper=n_weeks - 1)
+out_tx['Week_Start'] = week_starts[week_idx.values]
+
+weekly_sales = out_tx.groupby(['SKU', 'Week_Start'])['Quantity'].sum().reset_index()
+
+# Fill in every product x every week, even weeks with zero sales, so the
+# trend lines show real gaps instead of silently skipping them.
+all_combos = pd.MultiIndex.from_product([inventory_df['SKU'], week_starts], names=['SKU', 'Week_Start'])
+weekly_sales = weekly_sales.set_index(['SKU', 'Week_Start']).reindex(all_combos, fill_value=0).reset_index()
+weekly_sales = weekly_sales.rename(columns={'Quantity': 'Quantity_Sold'})
+
+weekly_sales = weekly_sales.merge(inventory_df[['SKU', 'Product_Name', 'Unit_Cost']], on='SKU', how='left')
+weekly_sales['Dollar_Amount'] = (weekly_sales['Quantity_Sold'] * weekly_sales['Unit_Cost']).round(2)
+weekly_sales = weekly_sales.sort_values(['SKU', 'Week_Start']).reset_index(drop=True)
+
+# ─────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["Dashboard", "Inventory Data", "Transactions Data"])
+tab0, tab1, tab2, tab3 = st.tabs(["Action Center", "Dashboard", "Inventory Data", "Transactions Data"])
+
+# ═════════════════════════════════════════════
+# TAB 0 — ACTION CENTER
+# ═════════════════════════════════════════════
+with tab0:
+    st.caption("Everything that needs your attention today, in one place.")
+
+    # Top-level KPI tiles
+    total_value = final_df['Inventory_Value'].sum()
+
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1.metric("Total Products", len(final_df))
+    k2.metric(
+        "Insufficient Inventory",
+        int((final_df['Status'] == 'CRITICAL').sum()),
+        help="Current stock is at or below Safety Stock — the emergency buffer is gone. Order immediately."
+    )
+    k3.metric(
+        "Reorder Needed",
+        int((final_df['Status'] == 'WARNING').sum()),
+        help="Current stock is at or below the Reorder Point, but still above Safety Stock. Time to place an order."
+    )
+    k4.metric(
+        "Sufficient Inventory",
+        int((final_df['Status'] == 'OK').sum()),
+        help="Current stock is above the Reorder Point. No action needed right now."
+    )
+    k5.metric(
+        "Avg Weekly Sales",
+        round(final_df['Avg_Weekly_Sales'].mean(), 2),
+        help=f"Average units sold per week across all products (Total Units Sold ÷ {total_weeks:.1f} weeks, "
+             "the same date window for every product)."
+    )
+    k6.metric(
+        "Total Inventory Value", f"${total_value:,.0f}",
+        help="Current stock × unit cost, summed across all products."
+    )
+
+    st.divider()
+
+    # Priority action list
+    st.subheader("Needs Your Attention")
+    priority = final_df[final_df['Status'] != 'OK'].copy()
+
+    if priority.empty:
+        st.success("Nothing needs attention right now — every product is sufficiently stocked.")
+    else:
+        severity_rank = {'CRITICAL': 0, 'WARNING': 1}
+        priority['_rank'] = priority['Status'].map(severity_rank)
+        priority = priority.sort_values(['_rank', 'Days_Until_Stockout'])
+
+        priority_display = priority[[
+            'SKU', 'Product_Name', 'Status', 'Current_Level',
+            'Days_Until_Stockout', 'Lead_Time_Days', 'Safety_Stock', 'Reorder_Point'
+        ]].copy()
+        priority_display['Days_Until_Stockout'] = priority_display['Days_Until_Stockout'].apply(
+            lambda x: f"{x:.1f}" if x != float('inf') else "—"
+        )
+
+        def style_priority_row(row):
+            colors = {
+                'CRITICAL': 'background-color: rgba(239, 68, 68, 0.15)',
+                'WARNING':  'background-color: rgba(245, 158, 11, 0.15)',
+            }
+            return [colors.get(row['Status'], '')] * len(row)
+
+        def style_priority_status(val):
+            styles = {
+                'CRITICAL': 'background-color: #ef4444; color: white; font-weight: 700',
+                'WARNING':  'background-color: #f59e0b; color: white; font-weight: 700',
+            }
+            return styles.get(val, '')
+
+        styled_priority = (
+            priority_display.style
+            .apply(style_priority_row, axis=1)
+            .map(style_priority_status, subset=['Status'])
+        )
+        st.dataframe(styled_priority, use_container_width=True, hide_index=True)
+        st.caption(
+            "Sorted most urgent first: Insufficient Inventory before Reorder Needed, then by days until "
+            "stockout. Lead Time is shown so you know how urgent placing the order really is — a 7-day-lead "
+            "item flagged today is more urgent than a 2-day-lead item flagged today."
+        )
+
+    st.divider()
+
+    # Weekly sales trend — every product, one chart, clickable legend
+    st.subheader(f"Weekly Sales Trend — Last {n_weeks} Weeks")
+    fig_trend = px.line(
+        weekly_sales, x='Week_Start', y='Quantity_Sold', color='Product_Name',
+        markers=True
+    )
+    fig_trend.update_layout(
+        xaxis_title='Week', yaxis_title='Units Sold', height=500,
+        legend_title_text='Product (click to hide, double-click to isolate)'
+    )
+    st.plotly_chart(fig_trend, use_container_width=True)
+    st.caption(
+        "Click a product in the legend to hide/show its line; double-click a product to isolate it and "
+        "hide everything else. Every product has a point for every week, including weeks with zero sales."
+    )
+
+    st.divider()
+
+    # Per-product weekly detail — quantity and dollar amount, week over week
+    st.subheader("Weekly Sales Velocity Detail")
+    selected_name = st.selectbox(
+        "Select a product", options=sorted(inventory_df['Product_Name'].unique()), key='action_center_product'
+    )
+    detail = weekly_sales[weekly_sales['Product_Name'] == selected_name].sort_values('Week_Start').copy()
+
+    fig_detail = go.Figure()
+    fig_detail.add_bar(
+        name='Quantity Sold', x=detail['Week_Start'], y=detail['Quantity_Sold'],
+        marker_color='#4C9BE8', yaxis='y1'
+    )
+    fig_detail.add_scatter(
+        name='Dollar Amount', x=detail['Week_Start'], y=detail['Dollar_Amount'],
+        mode='lines+markers', marker_color='#F4A100', yaxis='y2'
+    )
+    fig_detail.update_layout(
+        yaxis=dict(title='Units Sold'),
+        yaxis2=dict(title='Dollar Amount ($)', overlaying='y', side='right'),
+        legend=dict(orientation='h', y=1.12),
+        height=350,
+        margin=dict(t=30)
+    )
+    st.plotly_chart(fig_detail, use_container_width=True)
+
+    detail['Qty_Change_vs_Prior_Week'] = detail['Quantity_Sold'].diff()
+    detail['Dollar_Change_vs_Prior_Week'] = detail['Dollar_Amount'].diff()
+    detail_display = detail[[
+        'Week_Start', 'Quantity_Sold', 'Qty_Change_vs_Prior_Week', 'Dollar_Amount', 'Dollar_Change_vs_Prior_Week'
+    ]].copy()
+    detail_display['Week_Start'] = detail_display['Week_Start'].dt.strftime('%Y-%m-%d')
+    detail_display.columns = [
+        'Week Starting', 'Quantity Sold', 'Qty Change vs Prior Week', 'Dollar Amount', '$ Change vs Prior Week'
+    ]
+    st.dataframe(detail_display, use_container_width=True, hide_index=True)
+    st.caption("Week-over-week velocity for the selected product — first week has no prior week to compare against.")
 
 # ═════════════════════════════════════════════
 # TAB 1 — DASHBOARD
