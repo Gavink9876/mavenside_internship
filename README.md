@@ -13,10 +13,13 @@ mavenside_internship/
 ├── app.py                  ← Streamlit web app (main dashboard)
 ├── dashboard.html          ← Standalone HTML version (no Python needed to view)
 ├── inventory_data.csv      ← 15 products: SKU, cost, price, discount, lead time, safety stock, reorder point
-└── transactions.csv        ← synthetic organic sales + restock history, 18 weeks ending today
+├── transactions.csv        ← synthetic organic sales + restock history, 18 weeks ending today
+└── orders.csv              ← auto-generated the first time the app places an order (see Ordering below)
 ```
 
 **`inventory_data.csv` columns:** `SKU`, `Product_Name`, `Unit_Cost` (what we pay), `Lead_Time_Days`, `Safety_Stock`, `Reorder_Point`, `Unit_Price` (retail price), `Discount_Pct` (0-90, set from the app).
+
+**`orders.csv` columns:** `Order_ID`, `SKU`, `Quantity`, `Date_Placed`, `Expected_Arrival`, `Status` (Pending/Received), `Trigger_Type` (Auto/Manual).
 
 ---
 
@@ -74,12 +77,13 @@ The app has four tabs:
 ### Action Center (first tab — the daily go-to view)
 - **KPI tiles** — total products, critical/warning/healthy counts, average weekly sales, total inventory value
 - **Needs Your Attention** — every flagged product, most urgent first, with days until stockout and lead time
+- **Pending Orders** — every order (auto or manual) still in transit; click one to mark it arrived early
 - **Weekly Sales Trend** — one line chart, all 15 products, click a product in the legend to hide/show it, double-click to isolate it
 - **Weekly Sales Velocity Detail** — pick a product from the dropdown to see its quantity + dollar sales, week over week
 
 ### Product Inventory tab
 - **Inventory Table** — SKU, stock levels, status, unit price, discount %, and discounted price, colour-coded red/orange/green
-- **Click a row** to open that product's weekly sales trend below the table, plus a discount slider + **Apply Discount** button that writes the new `Discount_Pct` back to `inventory_data.csv`
+- **Click a row** to open that product's weekly sales trend below the table, a discount slider + **Apply Discount** button, and an order-quantity box + **Place Order** button (see Ordering below)
 - **Stock levels chart** — current stock vs reorder point vs safety stock for all 15 products
 - **Stock health pie** and **Average weekly sales chart** — fast-moving vs slow-moving products
 
@@ -102,6 +106,16 @@ The app has four tabs:
 | OK | `Current_Level > Reorder_Point` | Stock is healthy |
 
 **Average Weekly Sales** = Total Units Sold ÷ number of weeks spanned by the transaction data (same date window applied to every product, so the comparison is consistent instead of each product using its own random slice of history). Products above the median are Fast-Moving; at or below are Slow-Moving. (ITR — Total Units Sold ÷ Current Stock Level — is still calculated and kept as a column, but Movement classification is now driven by the weekly rate since it's a more intuitive, consistent number for a store manager to read.)
+
+---
+
+## Ordering (auto + manual)
+
+**Auto-ordering:** any product that goes CRITICAL gets an order placed automatically for `Reorder_Point − Current_Level` units — but only if it doesn't already have a Pending order. That check runs against `orders.csv` itself (not a Streamlit session variable), which is what keeps it safe to leave running — reloading the page, or the app restarting entirely, will never create a duplicate order for the same shortage.
+
+**Manual ordering:** click a product in the Product Inventory table, type a quantity (pre-filled with the same `Reorder_Point − Current_Level` calculation, but fully editable), and click Place Order. Unlike auto-orders, manual orders aren't blocked by an existing Pending order — you can place a second one on purpose if you want.
+
+**Arrival:** every order gets an `Expected_Arrival` = the day it was placed + that product's Lead Time, locked in at order time. Once today reaches that date, the app automatically marks it Received and adds a matching stock-in transaction — no manual step needed. You can also mark any Pending order as arrived early from the Action Center's Pending Orders table, for surprise/early deliveries.
 
 ---
 

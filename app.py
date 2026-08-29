@@ -2,12 +2,25 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from datetime import date, timedelta
+import os
 
 st.set_page_config(page_title="Mavenside Inventory Management", layout="wide")
 st.markdown("""
 <style>
     [data-testid='stDeployButton'] {display:none}
     html { font-size: 19px; }
+    /* Push "Inventory Data" (3rd tab) and everything after it to the right,
+       separating the edit/admin tabs from Action Center / Product Inventory.
+       Two selectors + !important to survive whichever DOM shape/specificity
+       this Streamlit version uses for the tab bar. */
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        display: flex !important;
+    }
+    [data-testid="stTabs"] [data-baseweb="tab-list"] button:nth-child(3),
+    [data-testid="stTabs"] [data-baseweb="tab-list"] button[data-baseweb="tab"]:nth-of-type(3) {
+        margin-left: auto !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 st.title("Mavenside Inventory Management")
@@ -17,6 +30,58 @@ st.title("Mavenside Inventory Management")
 # ─────────────────────────────────────────────
 inventory_df    = pd.read_csv('inventory_data.csv')
 transactions_df = pd.read_csv('transactions.csv')
+
+ORDERS_FILE = 'orders.csv'
+ORDER_COLUMNS = ['Order_ID', 'SKU', 'Quantity', 'Date_Placed', 'Expected_Arrival', 'Status', 'Trigger_Type']
+if os.path.exists(ORDERS_FILE):
+    orders_df = pd.read_csv(ORDERS_FILE)
+else:
+    orders_df = pd.DataFrame(columns=ORDER_COLUMNS)
+
+today = date.today()
+today_str = today.isoformat()
+
+# ─────────────────────────────────────────────
+# ORDER AUTOMATION: helpers
+# ─────────────────────────────────────────────
+def next_order_ids(existing_orders_df, count):
+    """Generate `count` new sequential Order_IDs like ORD00001, continuing from
+    whatever the highest existing number is."""
+    if existing_orders_df.empty:
+        start = 1
+    else:
+        nums = existing_orders_df['Order_ID'].str.replace('ORD', '', regex=False).astype(int)
+        start = nums.max() + 1
+    return [f'ORD{start + i:05d}' for i in range(count)]
+
+def fulfill_order(orders_df, transactions_df, order_id, arrival_date=None):
+    """Marks one order Received and appends a matching 'In' transaction.
+    Used both by the automatic lead-time check and the manual 'It's Arrived' button."""
+    if arrival_date is None:
+        arrival_date = today_str
+    row = orders_df.loc[orders_df['Order_ID'] == order_id].iloc[0]
+    new_tx = pd.DataFrame([{
+        'Transaction_ID': f'IN-{order_id}',
+        'SKU': row['SKU'],
+        'Date': arrival_date,
+        'Type': 'In',
+        'Quantity': row['Quantity']
+    }])
+    transactions_df = pd.concat([transactions_df, new_tx], ignore_index=True)
+    orders_df.loc[orders_df['Order_ID'] == order_id, 'Status'] = 'Received'
+    transactions_df.to_csv('transactions.csv', index=False)
+    orders_df.to_csv(ORDERS_FILE, index=False)
+    return orders_df, transactions_df
+
+# ─────────────────────────────────────────────
+# ORDER AUTOMATION: auto-fulfill any order whose lead time has passed.
+# This runs on every rerun, but is safe to repeat — an order only gets
+# processed once, since the moment it's fulfilled its Status flips to
+# 'Received' and it will never match the Pending filter again.
+# ─────────────────────────────────────────────
+due_mask = (orders_df['Status'] == 'Pending') & (orders_df['Expected_Arrival'] <= today_str)
+for oid in orders_df.loc[due_mask, 'Order_ID'].tolist():
+    orders_df, transactions_df = fulfill_order(orders_df, transactions_df, oid)
 
 # ─────────────────────────────────────────────
 # WEEK 2: Calculate Current Stock
@@ -43,6 +108,35 @@ def get_status(row):
         return 'OK'
 
 final_df['Status'] = final_df.apply(get_status, axis=1)
+
+# ─────────────────────────────────────────────
+# ORDER AUTOMATION: auto-place an order for any CRITICAL product that
+# doesn't already have a Pending order sitting against it. Checking
+# against orders.csv (not session state) is what keeps this safe to
+# re-run on every page load without creating duplicate orders.
+# ─────────────────────────────────────────────
+pending_skus = set(orders_df.loc[orders_df['Status'] == 'Pending', 'SKU'])
+critical = final_df[(final_df['Status'] == 'CRITICAL') & (~final_df['SKU'].isin(pending_skus))]
+
+if not critical.empty:
+    new_order_rows = []
+    order_ids = next_order_ids(orders_df, len(critical))
+    for order_id, (_, row) in zip(order_ids, critical.iterrows()):
+        qty = int(row['Reorder_Point'] - row['Current_Level'])
+        if qty <= 0:
+            continue
+        new_order_rows.append({
+            'Order_ID': order_id,
+            'SKU': row['SKU'],
+            'Quantity': qty,
+            'Date_Placed': today_str,
+            'Expected_Arrival': (today + timedelta(days=int(row['Lead_Time_Days']))).isoformat(),
+            'Status': 'Pending',
+            'Trigger_Type': 'Auto'
+        })
+    if new_order_rows:
+        orders_df = pd.concat([orders_df, pd.DataFrame(new_order_rows)], ignore_index=True)
+        orders_df.to_csv(ORDERS_FILE, index=False)
 
 # ─────────────────────────────────────────────
 # WEEK 3: Inventory Turnover Ratio + Weekly Sales Rate
@@ -230,6 +324,40 @@ with tab0:
 
     st.divider()
 
+    # Pending Orders — auto-placed and manual orders both live here
+    st.subheader("Pending Orders")
+    pending_orders = orders_df[orders_df['Status'] == 'Pending'].copy()
+
+    if pending_orders.empty:
+        st.info("No pending orders right now.")
+    else:
+        pending_orders = pending_orders.merge(inventory_df[['SKU', 'Product_Name']], on='SKU', how='left')
+        pending_orders['Days_Until_Arrival'] = (
+            pd.to_datetime(pending_orders['Expected_Arrival']) - pd.Timestamp(today)
+        ).dt.days
+
+        orders_display = pending_orders[[
+            'Order_ID', 'SKU', 'Product_Name', 'Quantity', 'Date_Placed',
+            'Expected_Arrival', 'Days_Until_Arrival', 'Trigger_Type'
+        ]].sort_values('Days_Until_Arrival')
+
+        order_event = st.dataframe(
+            orders_display, use_container_width=True, hide_index=True,
+            on_select='rerun', selection_mode='single-row', key='pending_orders_table'
+        )
+        st.caption("Click an order to mark it as arrived early — this also happens automatically once the lead time passes.")
+
+        selected_order_rows = order_event.selection.rows if order_event and order_event.selection else []
+        if selected_order_rows:
+            selected_order_id = orders_display.iloc[selected_order_rows[0]]['Order_ID']
+            selected_order_product = orders_display.iloc[selected_order_rows[0]]['Product_Name']
+            if st.button(f"Mark '{selected_order_id}' as Arrived", key=f'mark_arrived_{selected_order_id}'):
+                orders_df, transactions_df = fulfill_order(orders_df, transactions_df, selected_order_id)
+                st.success(f"{selected_order_product} — order {selected_order_id} marked as arrived.")
+                st.rerun()
+
+    st.divider()
+
     # Weekly sales trend — every product, one chart, clickable legend
     st.subheader(f"Weekly Sales Trend — Last {n_weeks} Weeks")
     fig_trend = px.line(
@@ -263,7 +391,7 @@ with tab1:
 
     # Inventory table with color coding, price/discount, and click-to-expand detail
     st.subheader("Inventory Table")
-    st.caption("Click a product row to see its weekly sales trend and set a discount.")
+    st.caption("Click a product row to see its weekly sales trend, set a discount, or place an order.")
     display_df = final_df[[
         'SKU', 'Product_Name', 'Current_Level', 'Safety_Stock', 'Reorder_Point', 'Status',
         'Unit_Price', 'Discount_Pct', 'Discounted_Price'
@@ -304,7 +432,8 @@ with tab1:
     if selected_rows:
         selected_sku = display_df.iloc[selected_rows[0]]['SKU']
         selected_product = display_df.iloc[selected_rows[0]]['Product_Name']
-        current_discount = int(final_df.loc[final_df['SKU'] == selected_sku, 'Discount_Pct'].iloc[0])
+        selected_row = final_df.loc[final_df['SKU'] == selected_sku].iloc[0]
+        current_discount = int(selected_row['Discount_Pct'])
 
         st.markdown(f"#### {selected_product}")
 
@@ -316,6 +445,34 @@ with tab1:
             inventory_df.loc[inventory_df['SKU'] == selected_sku, 'Discount_Pct'] = new_discount
             inventory_df.to_csv('inventory_data.csv', index=False)
             st.success(f"Discount updated to {new_discount}% for {selected_product}.")
+            st.rerun()
+
+        # Place a manual order for this product
+        existing_pending = orders_df[(orders_df['SKU'] == selected_sku) & (orders_df['Status'] == 'Pending')]
+        if not existing_pending.empty:
+            p = existing_pending.iloc[0]
+            st.info(f"Already has a pending order: {int(p['Quantity'])} units, expected {p['Expected_Arrival']}.")
+
+        default_qty = max(int(selected_row['Reorder_Point'] - selected_row['Current_Level']), 1)
+        oc1, oc2 = st.columns([3, 1])
+        order_qty = oc1.number_input(
+            "Order Quantity", min_value=1, value=default_qty, key=f'order_qty_{selected_sku}'
+        )
+        if oc2.button("Place Order", key=f'place_order_{selected_sku}'):
+            new_id = next_order_ids(orders_df, 1)[0]
+            lead_time = int(selected_row['Lead_Time_Days'])
+            new_row = pd.DataFrame([{
+                'Order_ID': new_id,
+                'SKU': selected_sku,
+                'Quantity': int(order_qty),
+                'Date_Placed': today_str,
+                'Expected_Arrival': (today + timedelta(days=lead_time)).isoformat(),
+                'Status': 'Pending',
+                'Trigger_Type': 'Manual'
+            }])
+            orders_df = pd.concat([orders_df, new_row], ignore_index=True)
+            orders_df.to_csv(ORDERS_FILE, index=False)
+            st.success(f"Order {new_id} placed for {order_qty} units of {selected_product}.")
             st.rerun()
 
         render_weekly_detail(selected_product)
@@ -413,18 +570,32 @@ with tab3:
     st.subheader("Transactions Data")
     st.caption("Add new In/Out rows at the bottom, or edit existing ones. Click Save when done.")
 
-    transactions_display = transactions_df.copy()
-    transactions_display['_sort_date'] = pd.to_datetime(transactions_display['Date'])
-    transactions_display = transactions_display.sort_values('_sort_date', ascending=False).drop(columns='_sort_date').reset_index(drop=True)
+    # Product_Name is looked up from inventory_data.csv purely for display —
+    # it is never written back to transactions.csv, which keeps its original schema.
+    transactions_display = transactions_df.merge(inventory_df[['SKU', 'Product_Name']], on='SKU', how='left')
+    transactions_display = transactions_display[['Transaction_ID', 'SKU', 'Product_Name', 'Date', 'Type', 'Quantity']]
+
+    search_term = st.text_input("Search by product name", key='tx_search')
+    if search_term:
+        visible_mask = transactions_display['Product_Name'].str.contains(search_term, case=False, na=False)
+    else:
+        visible_mask = pd.Series(True, index=transactions_display.index)
+
+    visible_ids = set(transactions_display.loc[visible_mask, 'Transaction_ID'])
+    filtered_display = transactions_display[visible_mask].reset_index(drop=True)
+
+    if search_term:
+        st.caption(f"Showing {len(filtered_display)} of {len(transactions_display)} transactions.")
 
     edited_transactions = st.data_editor(
-        transactions_display,
+        filtered_display,
         use_container_width=True,
         hide_index=True,
         num_rows='dynamic',
         column_config={
             'Transaction_ID': st.column_config.TextColumn('Transaction ID'),
             'SKU':            st.column_config.SelectboxColumn('SKU', options=sorted(inventory_df['SKU'].tolist())),
+            'Product_Name':   st.column_config.TextColumn('Product Name', disabled=True),
             'Date':           st.column_config.TextColumn('Date (YYYY-MM-DD)'),
             'Type':           st.column_config.SelectboxColumn('Type', options=['In', 'Out']),
             'Quantity':       st.column_config.NumberColumn('Quantity', min_value=1),
@@ -435,6 +606,13 @@ with tab3:
     st.divider()
 
     if st.button("Save Transactions", type='primary', key='save_tx'):
-        edited_transactions.to_csv('transactions.csv', index=False)
+        # Rows hidden by the search filter must be preserved untouched — only the
+        # rows that were actually visible (and possibly edited/added/deleted) get
+        # replaced, so searching for "Toys" and saving can never wipe out the rest
+        # of the transaction log.
+        untouched_rows = transactions_df[~transactions_df['Transaction_ID'].isin(visible_ids)]
+        edited_rows = edited_transactions.drop(columns=['Product_Name'], errors='ignore')
+        to_save = pd.concat([untouched_rows, edited_rows], ignore_index=True)
+        to_save.to_csv('transactions.csv', index=False)
         st.success("Saved! Switch to Product Inventory and press R to refresh.")
         st.rerun()

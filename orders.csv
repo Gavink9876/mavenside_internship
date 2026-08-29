@@ -1,0 +1,3 @@
+Order_ID,SKU,Quantity,Date_Placed,Expected_Arrival,Status,Trigger_Type
+ORD00001,PROD-191,8,2026-08-28,2026-09-01,Pending,Auto
+ORD00002,PROD-627,9,2026-08-28,2026-08-30,Pending,Auto
