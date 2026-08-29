@@ -288,9 +288,19 @@ with tab0:
         priority['_rank'] = priority['Status'].map(severity_rank)
         priority = priority.sort_values(['_rank', 'Days_Until_Stockout'])
 
+        # Show whether a pending order already covers each flagged product, so
+        # a CRITICAL/WARNING row doesn't look ignored when it's already been ordered.
+        pending_by_sku = (
+            orders_df[orders_df['Status'] == 'Pending']
+            .groupby('SKU')['Expected_Arrival'].min()
+        )
+        priority['Order_Status'] = priority['SKU'].map(pending_by_sku).apply(
+            lambda x: f"Ordered — arrives {x}" if pd.notna(x) else "Not Ordered"
+        )
+
         priority_display = priority[[
             'SKU', 'Product_Name', 'Status', 'Current_Level',
-            'Days_Until_Stockout', 'Lead_Time_Days', 'Safety_Stock', 'Reorder_Point'
+            'Days_Until_Stockout', 'Lead_Time_Days', 'Safety_Stock', 'Reorder_Point', 'Order_Status'
         ]].copy()
         priority_display['Days_Until_Stockout'] = priority_display['Days_Until_Stockout'].apply(
             lambda x: f"{x:.1f}" if x != float('inf') else "—"
@@ -310,16 +320,23 @@ with tab0:
             }
             return styles.get(val, '')
 
+        def style_order_status(val):
+            if val.startswith('Ordered'):
+                return 'background-color: #22c55e; color: white; font-weight: 700'
+            return 'background-color: #ef4444; color: white; font-weight: 700'
+
         styled_priority = (
             priority_display.style
             .apply(style_priority_row, axis=1)
             .map(style_priority_status, subset=['Status'])
+            .map(style_order_status, subset=['Order_Status'])
         )
         st.dataframe(styled_priority, use_container_width=True, hide_index=True)
         st.caption(
             "Sorted most urgent first: Insufficient Inventory before Reorder Needed, then by days until "
             "stockout. Lead Time is shown so you know how urgent placing the order really is — a 7-day-lead "
-            "item flagged today is more urgent than a 2-day-lead item flagged today."
+            "item flagged today is more urgent than a 2-day-lead item flagged today. Order Status shows "
+            "whether a pending order already covers this shortage."
         )
 
     st.divider()
