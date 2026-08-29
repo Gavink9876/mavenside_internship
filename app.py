@@ -3,14 +3,14 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="Inventory Tool Dashboard", layout="wide")
+st.set_page_config(page_title="Mavenside Inventory Management", layout="wide")
 st.markdown("""
 <style>
     [data-testid='stDeployButton'] {display:none}
     html { font-size: 19px; }
 </style>
 """, unsafe_allow_html=True)
-st.title("Inventory Tool — Executive Dashboard")
+st.title("Mavenside Inventory Management")
 
 # ─────────────────────────────────────────────
 # LOAD DATA (runs every time so edits reflect immediately)
@@ -150,8 +150,6 @@ tab0, tab1, tab2, tab3 = st.tabs(["Action Center", "Product Inventory", "Invento
 # TAB 0 — ACTION CENTER
 # ═════════════════════════════════════════════
 with tab0:
-    st.caption("Everything that needs your attention today, in one place.")
-
     # Top-level KPI tiles
     total_value = final_df['Inventory_Value'].sum()
 
